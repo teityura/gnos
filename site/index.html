@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gnos - Steam Price Observer</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0a0a0a; color: #e0e0e0;
+    min-height: 100vh; padding: 40px 32px;
+    font-size: 16px; line-height: 1.6;
+  }
+  .container { max-width: 840px; margin: 0 auto; }
+
+  h1 { font-size: 26px; font-weight: 600; letter-spacing: 0.04em; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #555; margin-bottom: 36px; }
+
+  .search-row { display: flex; gap: 10px; margin-bottom: 10px; }
+  input[type="text"] {
+    flex: 1; padding: 12px 16px;
+    background: #161616; border: 1px solid #2a2a2a; border-radius: 8px;
+    color: #e0e0e0; font-size: 15px; outline: none;
+    transition: border-color 0.15s;
+  }
+  input[type="text"]:focus { border-color: #3a6a4a; }
+  input[type="text"]::placeholder { color: #444; }
+  button {
+    padding: 12px 24px;
+    background: #2a5a3a; color: #cce8d4;
+    border: none; border-radius: 8px;
+    font-size: 15px; cursor: pointer; white-space: nowrap;
+    transition: background 0.15s;
+  }
+  button:hover { background: #366b48; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .search-results { margin-bottom: 12px; }
+  .result-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 11px 16px;
+    background: #111; border: 1px solid #1e1e1e; border-radius: 8px;
+    margin-bottom: 5px;
+  }
+  .result-name { font-size: 14px; }
+  .result-id { font-size: 12px; color: #444; margin-top: 2px; }
+  .btn-add { padding: 7px 16px; font-size: 13px; background: #1c3a28; color: #8ecfa4; flex-shrink: 0; }
+  .btn-add:hover { background: #254d36; }
+
+  .api-key-row {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 28px; font-size: 14px; color: #555;
+  }
+  .api-key-row input { flex: none; width: 200px; }
+
+  .msg {
+    padding: 11px 16px; border-radius: 8px;
+    margin-bottom: 20px; font-size: 14px;
+  }
+  .msg-ok { background: #142a1e; color: #6fce8a; border: 1px solid #1e4a2e; }
+  .msg-err { background: #2a1414; color: #ce6f6f; border: 1px solid #4a1e1e; }
+
+  .section-label {
+    font-size: 12px; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase; color: #444; margin-bottom: 14px;
+  }
+
+  .game-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 14px;
+    background: #131313; border: 1px solid #1c1c1c; border-radius: 6px;
+    margin-bottom: 2px;
+    transition: border-color 0.15s;
+  }
+  .game-item:hover { border-color: #2a2a2a; }
+  .game-left { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .game-name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .game-added-by { font-size: 11px; color: #3a6a4a; flex-shrink: 0; }
+  .game-price { font-size: 13px; color: #aaa; white-space: nowrap; }
+  .game-price .disc { color: #6fce8a; margin-left: 4px; font-size: 11px; }
+  .game-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; margin-left: 16px; }
+  .game-link {
+    font-size: 13px; color: #5a8a6a; text-decoration: none;
+    opacity: 0.7; transition: opacity 0.15s;
+  }
+  .game-link:hover { opacity: 1; text-decoration: underline; }
+  .btn-delete {
+    font-size: 12px; color: #5a2a2a; background: none;
+    border: none; cursor: pointer; padding: 0;
+    opacity: 0.5; transition: opacity 0.15s;
+  }
+  .btn-delete:hover { opacity: 1; color: #ce6f6f; }
+
+  .loading { color: #444; font-size: 14px; }
+  .empty { color: #333; font-size: 14px; padding: 32px 0; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>gnos</h1>
+<p class="subtitle">Steam Price Observer — gnosis + steam</p>
+
+<div class="search-row">
+  <input type="text" id="searchQ" placeholder="ゲーム名で検索..." onkeydown="if(event.key==='Enter')searchGames()">
+  <button id="searchBtn" onclick="searchGames()">検索</button>
+</div>
+<div id="searchResults" class="search-results"></div>
+
+<form id="keyForm" autocomplete="on" onsubmit="return false">
+  <input type="text" name="username" autocomplete="username"
+         value="gnos" readonly
+         style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
+  <div class="api-key-row">
+    API キー: <input type="password" id="apiKey" name="password"
+                     autocomplete="current-password" placeholder="your api key">
+  </div>
+</form>
+
+<div id="message"></div>
+
+<p class="section-label">ウォッチリスト</p>
+<div id="gameList"><span class="loading">読み込み中...</span></div>
+
+</div>
+<script>
+const API_URL = "${api_url}";
+
+// API キーを localStorage で永続化
+const apiKeyEl = document.getElementById("apiKey");
+apiKeyEl.value = localStorage.getItem("gnos_api_key") || "";
+const saveKey = () => localStorage.setItem("gnos_api_key", apiKeyEl.value.trim());
+apiKeyEl.addEventListener("change", saveKey);
+apiKeyEl.addEventListener("input", saveKey);
+
+async function searchGames() {
+  const q = document.getElementById("searchQ").value.trim();
+  const resultsEl = document.getElementById("searchResults");
+  const btn = document.getElementById("searchBtn");
+  if (!q) return;
+
+  btn.disabled = true;
+  resultsEl.innerHTML = '<span class="loading">検索中...</span>';
+
+  try {
+    const res = await fetch(API_URL + "/search?q=" + encodeURIComponent(q));
+    const data = await res.json();
+
+    if (!data.results || data.results.length === 0) {
+      resultsEl.innerHTML = '<div class="empty">見つかりませんでした</div>';
+    } else {
+      resultsEl.innerHTML = data.results.map(r =>
+        '<div class="result-item">' +
+          '<div>' +
+            '<div class="result-name">' + esc(r.name) + '</div>' +
+            '<div class="result-id">App ID: ' + r.app_id + '</div>' +
+          '</div>' +
+          '<button class="btn-add" onclick="addGame(\'' + r.app_id + '\')">追加</button>' +
+        '</div>'
+      ).join("");
+    }
+  } catch (e) {
+    resultsEl.innerHTML = '<div class="empty">検索エラー: ' + e.message + '</div>';
+  }
+  btn.disabled = false;
+}
+
+async function addGame(appId) {
+  const apiKey = document.getElementById("apiKey").value.trim();
+  if (!apiKey) { showMsg("err", "API キーを入力してください"); return; }
+
+  try {
+    const res = await fetch(API_URL + "/add", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "x-api-key": apiKey},
+      body: JSON.stringify({app_id: appId}),
+    });
+    const data = await res.json();
+
+    if (res.ok) {
+      showMsg("ok", data.name + " を追加しました");
+      document.getElementById("searchQ").value = "";
+      document.getElementById("searchResults").innerHTML = "";
+      loadGames();
+    } else {
+      showMsg("err", data.error || "エラーが発生しました");
+    }
+  } catch (e) {
+    showMsg("err", "通信エラー: " + e.message);
+  }
+}
+
+async function loadGames() {
+  const el = document.getElementById("gameList");
+  try {
+    const res = await fetch(API_URL + "/games");
+    const data = await res.json();
+
+    if (!data.games || data.games.length === 0) {
+      el.innerHTML = '<div class="empty">ゲームが登録されていません</div>';
+      return;
+    }
+
+    data.games.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ja"));
+    el.innerHTML = data.games.map(g => {
+      let priceHtml = '<span class="game-price">—</span>';
+      if (g.latest_price != null) {
+        const yen = "¥" + (g.latest_price / 100).toLocaleString();
+        const disc = g.latest_discount > 0
+          ? '<span class="disc">-' + g.latest_discount + '%</span>'
+          : "";
+        priceHtml = '<span class="game-price">' + yen + disc + '</span>';
+      }
+      return '<div class="game-item">' +
+        '<div class="game-left">' +
+          '<span class="game-name">' + esc(g.name || g.app_id) + '</span>' +
+          '<span class="game-added-by">' + esc(g.added_by || "anon") + '</span>' +
+        '</div>' +
+        '<div class="game-right">' +
+          priceHtml +
+          '<a class="game-link" href="history.html?app_id=' + g.app_id + '">履歴 →</a>' +
+          '<button class="btn-delete" onclick="deleteGame(\'' + g.app_id + '\', \'' + esc(g.name || g.app_id) + '\')">✕</button>' +
+        '</div>' +
+      '</div>';
+    }).join("");
+  } catch (e) {
+    el.innerHTML = '<div class="empty">読み込みに失敗しました</div>';
+  }
+}
+
+async function deleteGame(appId, name) {
+  const apiKey = document.getElementById("apiKey").value.trim();
+  if (!apiKey) { showMsg("err", "API キーを入力してください"); return; }
+  if (!confirm(name + "\n\n削除しますか？価格履歴もすべて削除されます。")) return;
+
+  try {
+    const res = await fetch(API_URL + "/games?app_id=" + appId, {
+      method: "DELETE",
+      headers: { "x-api-key": apiKey },
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showMsg("ok", name + " を削除しました");
+      loadGames();
+    } else {
+      showMsg("err", data.error || "削除に失敗しました");
+    }
+  } catch (e) {
+    showMsg("err", "通信エラー: " + e.message);
+  }
+}
+
+function showMsg(type, text) {
+  const el = document.getElementById("message");
+  el.className = "msg msg-" + type;
+  el.textContent = text;
+  setTimeout(() => { el.textContent = ""; el.className = ""; }, 4000);
+}
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+loadGames();
+</script>
+</body>
+</html>

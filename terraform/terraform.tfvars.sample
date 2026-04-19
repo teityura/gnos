@@ -1,0 +1,2 @@
+discord_webhook_url = "https://discord.com/api/webhooks/..."
+api_users           = ["alice", "bob"]

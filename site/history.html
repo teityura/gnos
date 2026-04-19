@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>gnos - 価格履歴</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0a0a0a; color: #e0e0e0;
+    min-height: 100vh; padding: 40px 32px;
+    font-size: 16px; line-height: 1.6;
+  }
+  .container { max-width: 840px; margin: 0 auto; }
+
+  .topbar {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 28px;
+  }
+  .back {
+    font-size: 13px; color: #4a7a5a; text-decoration: none;
+    opacity: 0.8; transition: opacity 0.15s;
+  }
+  .back:hover { opacity: 1; text-decoration: underline; }
+.game-title { font-size: 22px; font-weight: 600; margin-bottom: 6px; }
+  .store-link {
+    font-size: 13px; color: #4a7a5a; text-decoration: none;
+    opacity: 0.8; transition: opacity 0.15s; display: inline-block; margin-bottom: 32px;
+  }
+  .store-link:hover { opacity: 1; text-decoration: underline; }
+
+  canvas { width: 100%; max-width: 840px; margin-bottom: 28px; }
+
+  .section-label {
+    font-size: 12px; font-weight: 600; letter-spacing: 0.1em;
+    text-transform: uppercase; color: #444; margin-bottom: 12px;
+  }
+
+  .price-table {
+    width: 100%; border-collapse: collapse; font-size: 14px;
+  }
+  .price-table th {
+    text-align: left; padding: 8px 12px;
+    color: #444; border-bottom: 1px solid #1c1c1c;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .price-table td {
+    padding: 11px 12px; border-bottom: 1px solid #131313;
+  }
+  .price-table tr:last-child td { border-bottom: none; }
+  .discount { color: #6fce8a; font-weight: 500; }
+
+  .loading { color: #444; font-size: 14px; }
+  .empty { color: #333; font-size: 14px; padding: 32px 0; text-align: center; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="container">
+
+<div class="topbar">
+  <a class="back" href="index.html">← ウォッチリストに戻る</a>
+</div>
+
+<h1 class="game-title" id="title">読み込み中...</h1>
+<a class="store-link" id="storeLink" target="_blank"></a>
+
+<canvas id="chart" height="260"></canvas>
+
+<p class="section-label">価格履歴</p>
+<table class="price-table">
+  <thead><tr><th>日時</th><th>価格</th><th>割引</th></tr></thead>
+  <tbody id="tbody"><tr><td colspan="3" class="loading">読み込み中...</td></tr></tbody>
+</table>
+
+</div>
+<script>
+const API_URL = "${api_url}";
+const params = new URLSearchParams(location.search);
+const appId = params.get("app_id");
+
+if (!appId) {
+  document.getElementById("title").textContent = "app_id が指定されていません";
+} else {
+  const storeLink = document.getElementById("storeLink");
+  storeLink.href = "https://store.steampowered.com/app/" + appId + "/";
+  storeLink.textContent = "Steam ストアページ →";
+  loadHistory();
+}
+
+async function loadHistory() {
+  try {
+    const [gamesRes, histRes] = await Promise.all([
+      fetch(API_URL + "/games"),
+      fetch(API_URL + "/history?app_id=" + appId),
+    ]);
+    const gamesData = await gamesRes.json();
+    const data = await histRes.json();
+
+    const game = (gamesData.games || []).find(g => g.app_id === appId);
+    document.getElementById("title").textContent = game ? game.name : "App ID: " + appId;
+
+    if (!data.prices || data.prices.length === 0) {
+      document.getElementById("tbody").innerHTML =
+        '<tr><td colspan="3" class="empty">履歴データがありません</td></tr>';
+      return;
+    }
+
+    const sorted = [...data.prices].sort((a, b) => a.checked_at.localeCompare(b.checked_at));
+
+    // テーブル（新しい順）
+    const tbody = document.getElementById("tbody");
+    tbody.innerHTML = [...sorted].reverse().map(p => {
+      const date = new Date(p.checked_at).toLocaleString("ja-JP");
+      const price = "¥" + (p.price / 100).toLocaleString();
+      const disc = p.discount > 0
+        ? '<span class="discount">' + p.discount + '%OFF</span>'
+        : "-";
+      return '<tr><td>' + date + '</td><td>' + price + '</td><td>' + disc + '</td></tr>';
+    }).join("");
+
+    // グラフ
+    new Chart(document.getElementById("chart"), {
+      type: "line",
+      data: {
+        labels: sorted.map(p => {
+          const d = new Date(p.checked_at);
+          return (d.getMonth()+1) + "/" + d.getDate();
+        }),
+        datasets: [{
+          label: "価格 (円)",
+          data: sorted.map(p => p.price / 100),
+          borderColor: "#4a8a5a",
+          backgroundColor: "rgba(74,138,90,0.08)",
+          fill: true,
+          tension: 0.3,
+          pointRadius: 3,
+          pointBackgroundColor: "#4a8a5a",
+        }]
+      },
+      options: {
+        responsive: true,
+        scales: {
+          y: {
+            ticks: { color: "#555", callback: v => "¥" + v.toLocaleString() },
+            grid: { color: "#161616" },
+            border: { color: "#1c1c1c" },
+          },
+          x: {
+            ticks: { color: "#555" },
+            grid: { color: "#161616" },
+            border: { color: "#1c1c1c" },
+          }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: { label: ctx => "¥" + ctx.parsed.y.toLocaleString() }
+          }
+        }
+      }
+    });
+
+  } catch (e) {
+    document.getElementById("tbody").innerHTML =
+      '<tr><td colspan="3" class="empty">読み込みに失敗しました: ' + e.message + '</td></tr>';
+  }
+}
+
+</script>
+</body>
+</html>
