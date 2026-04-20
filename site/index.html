@@ -81,9 +81,12 @@
   }
   .game-name:hover { color: #6fce8a; text-decoration: underline; }
   .game-added-by { font-size: 11px; color: #3a6a4a; flex-shrink: 0; }
-  .game-price { font-size: 13px; color: #aaa; white-space: nowrap; }
-  .game-price .disc { color: #6fce8a; margin-left: 4px; font-size: 11px; }
   .game-right { display: flex; align-items: center; gap: 12px; flex-shrink: 0; margin-left: 16px; }
+  .game-sale { display: flex; flex-direction: column; align-items: flex-end; min-width: 80px; }
+  .game-disc { font-size: 12px; color: #6fce8a; font-weight: 600; white-space: nowrap; }
+  .game-disc.no-sale { color: #333; font-weight: 400; }
+  .game-sale-end { font-size: 10px; color: #555; white-space: nowrap; margin-top: 1px; }
+  .game-price { font-size: 13px; color: #aaa; white-space: nowrap; min-width: 72px; text-align: right; }
   .game-link {
     font-size: 13px; color: #5a8a6a; text-decoration: none;
     opacity: 0.7; transition: opacity 0.15s;
@@ -208,20 +211,35 @@ async function loadGames() {
 
     data.games.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ja"));
     el.innerHTML = data.games.map(g => {
-      let priceHtml = '<span class="game-price">—</span>';
-      if (g.latest_price != null) {
-        const yen = "¥" + (g.latest_price / 100).toLocaleString();
-        const disc = g.latest_discount > 0
-          ? '<span class="disc">-' + g.latest_discount + '%</span>'
-          : "";
-        priceHtml = '<span class="game-price">' + yen + disc + '</span>';
+      // 割引・セール終了
+      let discHtml, saleEndHtml = "";
+      if (g.latest_discount > 0) {
+        discHtml = '<span class="game-disc">-' + g.latest_discount + '%</span>';
+        if (g.sale_end_at) {
+          const end = new Date(g.sale_end_at);
+          const jst = new Date(end.getTime() + 9 * 60 * 60 * 1000);
+          const m  = jst.getUTCMonth() + 1;
+          const d  = jst.getUTCDate();
+          const hh = String(jst.getUTCHours()).padStart(2, "0");
+          const mm = String(jst.getUTCMinutes()).padStart(2, "0");
+          saleEndHtml = '<span class="game-sale-end">' + m + '/' + d + ' ' + hh + ':' + mm + ' JST</span>';
+        }
+      } else {
+        discHtml = '<span class="game-disc no-sale">—</span>';
       }
+
+      // 価格
+      const priceHtml = g.latest_price != null
+        ? '<span class="game-price">¥' + (g.latest_price / 100).toLocaleString() + '</span>'
+        : '<span class="game-price">—</span>';
+
       return '<div class="game-item">' +
         '<div class="game-left">' +
           '<a class="game-name" href="https://store.steampowered.com/app/' + g.app_id + '/" target="_blank" rel="noopener">' + esc(g.name || g.app_id) + '</a>' +
           '<span class="game-added-by">' + esc(g.added_by || "anon") + '</span>' +
         '</div>' +
         '<div class="game-right">' +
+          '<div class="game-sale">' + discHtml + saleEndHtml + '</div>' +
           priceHtml +
           '<a class="game-link" href="history.html?app_id=' + g.app_id + '">履歴 →</a>' +
           '<button class="btn-delete" onclick="deleteGame(\'' + g.app_id + '\', \'' + esc(g.name || g.app_id) + '\')">✕</button>' +
