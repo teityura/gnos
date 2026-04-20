@@ -109,9 +109,12 @@ async function loadHistory() {
 
     const sorted = [...data.prices].sort((a, b) => a.checked_at.localeCompare(b.checked_at));
 
-    // テーブル（新しい順）
+    // テーブル（価格が変わったレコードのみ、新しい順）
+    const changed = sorted.filter((p, i) =>
+      i === 0 || p.price !== sorted[i - 1].price
+    );
     const tbody = document.getElementById("tbody");
-    tbody.innerHTML = [...sorted].reverse().map(p => {
+    tbody.innerHTML = [...changed].reverse().map(p => {
       const date = new Date(p.checked_at).toLocaleString("ja-JP");
       const price = "¥" + (p.price / 100).toLocaleString();
       const disc = p.discount > 0
