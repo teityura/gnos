@@ -75,7 +75,11 @@
   }
   .game-item:hover { border-color: #2a2a2a; }
   .game-left { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-  .game-name { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .game-name {
+    font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: #e0e0e0; text-decoration: none;
+  }
+  .game-name:hover { color: #6fce8a; text-decoration: underline; }
   .game-added-by { font-size: 11px; color: #3a6a4a; flex-shrink: 0; }
   .game-price { font-size: 13px; color: #aaa; white-space: nowrap; }
   .game-price .disc { color: #6fce8a; margin-left: 4px; font-size: 11px; }
@@ -214,7 +218,7 @@ async function loadGames() {
       }
       return '<div class="game-item">' +
         '<div class="game-left">' +
-          '<span class="game-name">' + esc(g.name || g.app_id) + '</span>' +
+          '<a class="game-name" href="https://store.steampowered.com/app/' + g.app_id + '/" target="_blank" rel="noopener">' + esc(g.name || g.app_id) + '</a>' +
           '<span class="game-added-by">' + esc(g.added_by || "anon") + '</span>' +
         '</div>' +
         '<div class="game-right">' +
