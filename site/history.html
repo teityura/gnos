@@ -50,6 +50,12 @@
   }
   .price-table tr:last-child td { border-bottom: none; }
   .discount { color: #6fce8a; font-weight: 500; }
+  .badge-low {
+    display: inline-block; margin-left: 8px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+    background: #2a4a1e; color: #8ecf5a; border: 1px solid #3a6a28;
+    border-radius: 4px; padding: 1px 6px; vertical-align: middle;
+  }
 
   .loading { color: #444; font-size: 14px; }
   .empty { color: #333; font-size: 14px; padding: 32px 0; text-align: center; }
@@ -113,10 +119,13 @@ async function loadHistory() {
     const changed = sorted.filter((p, i) =>
       i === 0 || p.price !== sorted[i - 1].price
     );
+    const minPrice = Math.min(...sorted.map(p => p.price));
     const tbody = document.getElementById("tbody");
     tbody.innerHTML = [...changed].reverse().map(p => {
       const date = new Date(p.checked_at).toLocaleString("ja-JP");
-      const price = "¥" + (p.price / 100).toLocaleString();
+      const isLow = p.price === minPrice;
+      const price = "¥" + (p.price / 100).toLocaleString()
+        + (isLow ? '<span class="badge-low">最安値</span>' : "");
       const disc = p.discount > 0
         ? '<span class="discount">' + p.discount + '%OFF</span>'
         : "-";
