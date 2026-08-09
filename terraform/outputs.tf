@@ -1,15 +1,14 @@
-output "gateway_url" {
-  description = "gnos-gateway の API Gateway URL"
-  value       = aws_apigatewayv2_stage.gateway.invoke_url
+output "api_url" {
+  description = "API の Lambda Function URL"
+  value       = aws_lambda_function_url.api.function_url
 }
 
 output "site_url" {
-  description = "gnos-site の公開URL"
-  value       = "https://gnos.teityura.com"
+  description = "静的サイトの S3 エンドポイント"
+  value       = aws_s3_bucket_website_configuration.site.website_endpoint
 }
 
-output "api_keys" {
-  description = "ユーザーごとの API キー"
-  value       = { for user, pwd in random_password.api_key : user => pwd.result }
-  sensitive   = true
+output "project_name" {
+  description = "リソース名の接頭辞。backup.sh が対象テーブルの絞り込みに使う"
+  value       = var.project_name
 }

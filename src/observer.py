@@ -30,10 +30,9 @@ def lambda_handler(event, context):
             current_price = price_info["final"]
             current_discount = price_info["discount_percent"]
 
-            # 前回価格を取得（書き込み前に取得することで「今回 vs 前回」を明確にする）
+            # 書き込み前に取得して「今回 vs 前回」を確定させる
             prev = get_last_price(app_id)
 
-            # 価格を記録
             prices_table.put_item(Item={
                 "app_id": app_id,
                 "checked_at": now,
@@ -48,7 +47,6 @@ def lambda_handler(event, context):
             prev_price = prev["price"]
             prev_discount = prev["discount"]
 
-            # 価格変動あり → 通知
             if current_price != prev_price:
                 is_lowest = current_price <= get_min_price(app_id)
                 lowest_tag = "\n🏆 **過去最安値更新！**" if is_lowest else ""

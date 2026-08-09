@@ -1,2 +1,10 @@
+project_name        = "gnos"
+aws_region          = "ap-northeast-1"
+
 discord_webhook_url = "https://discord.com/api/webhooks/..."
-api_users           = ["alice", "bob"]
+
+api_keys = {
+  "xxxxxxxxxxxxxxxx" = "user1"
+  "yyyyyyyyyyyyyyyy" = "user2"
+  "zzzzzzzzzzzzzzzz" = "user3"
+}

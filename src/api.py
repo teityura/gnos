@@ -61,7 +61,6 @@ def handle_add(event, webhook):
     if not app_id:
         return response(400, {"error": "app_id is required"})
 
-    # 既に登録済みか確認
     existing = games_table.get_item(Key={"app_id": app_id}).get("Item")
     if existing:
         return response(409, {
@@ -69,7 +68,6 @@ def handle_add(event, webhook):
             "name": existing.get("name"),
         })
 
-    # Steam API からゲーム名と価格を取得
     steam = fetch_steam_info(app_id)
     if not steam:
         return response(404, {"error": "game not found on Steam"})
@@ -77,7 +75,6 @@ def handle_add(event, webhook):
     name = steam["name"]
     now = datetime.now(timezone.utc).isoformat()
 
-    # gnos-games に追加
     games_table.put_item(Item={
         "app_id": app_id,
         "name": name,
@@ -85,7 +82,6 @@ def handle_add(event, webhook):
         "added_at": now,
     })
 
-    # gnos-prices に初回価格を記録
     price = steam.get("price_overview")
     if price:
         prices_table.put_item(Item={
@@ -95,7 +91,7 @@ def handle_add(event, webhook):
             "discount": price["discount_percent"],
         })
 
-    # Discord に通知（失敗しても登録は成功扱い）
+    # 通知が失敗しても登録は成功扱い
     if webhook:
         try:
             current = f"¥{price['final'] // 100:,}" if price else "無料"
@@ -123,10 +119,8 @@ def handle_delete(event, params):
     if not existing:
         return response(404, {"error": "not found"})
 
-    # gnos-games から削除
     games_table.delete_item(Key={"app_id": app_id})
 
-    # gnos-prices の関連レコードを全件削除
     resp = prices_table.query(
         KeyConditionExpression="app_id = :id",
         ExpressionAttributeValues={":id": app_id},
@@ -232,12 +226,13 @@ def convert_decimals(obj):
 
 
 def response(status, body):
-    """Lambda Function URL 用のレスポンス"""
+    """CORSヘッダは付けない。Function URL の cors 設定が付与するので、
+    ここでも付けると値が2重になりブラウザが拒否する（curlでは気づけない）。
+    """
     return {
         "statusCode": status,
         "headers": {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
         },
         "body": json.dumps(body, ensure_ascii=False),
     }

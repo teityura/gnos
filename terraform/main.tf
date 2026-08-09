@@ -4,39 +4,15 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
   }
-}
-
-# ============================================================
-# API キー（ユーザーごとに1本）
-# ============================================================
-
-resource "random_password" "api_key" {
-  for_each = toset(var.api_users)
-  length   = 16
-  special  = false
-}
-
-locals {
-  api_keys = jsonencode({
-    for user, pwd in random_password.api_key : pwd.result => user
-  })
 }
 
 provider "aws" {
   region = var.aws_region
 }
 
-# ============================================================
-# DynamoDB
-# ============================================================
-
 resource "aws_dynamodb_table" "games" {
-  name         = "gnos-games"
+  name         = "${var.project_name}-games"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "app_id"
 
@@ -47,7 +23,7 @@ resource "aws_dynamodb_table" "games" {
 }
 
 resource "aws_dynamodb_table" "prices" {
-  name         = "gnos-prices"
+  name         = "${var.project_name}-prices"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "app_id"
   range_key    = "checked_at"
@@ -62,12 +38,8 @@ resource "aws_dynamodb_table" "prices" {
   }
 }
 
-# ============================================================
-# IAM
-# ============================================================
-
 resource "aws_iam_role" "lambda_role" {
-  name = "gnos-lambda-role"
+  name = "${var.project_name}-lambda-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -82,7 +54,7 @@ resource "aws_iam_role" "lambda_role" {
 }
 
 resource "aws_iam_role_policy" "lambda_policy" {
-  name = "gnos-lambda-policy"
+  name = "${var.project_name}-lambda-policy"
   role = aws_iam_role.lambda_role.id
 
   policy = jsonencode({
@@ -117,10 +89,6 @@ resource "aws_iam_role_policy" "lambda_policy" {
   })
 }
 
-# ============================================================
-# Lambda: gnos-observer
-# ============================================================
-
 data "archive_file" "observer" {
   type        = "zip"
   source_file = "${path.module}/../src/observer.py"
@@ -128,7 +96,7 @@ data "archive_file" "observer" {
 }
 
 resource "aws_lambda_function" "observer" {
-  function_name    = "gnos-observer"
+  function_name    = local.functions.observer
   role             = aws_iam_role.lambda_role.arn
   handler          = "observer.lambda_handler"
   runtime          = "python3.12"
@@ -143,105 +111,72 @@ resource "aws_lambda_function" "observer" {
   }
 }
 
-# ============================================================
-# Lambda: gnos-gateway
-# ============================================================
-
-data "archive_file" "gateway" {
+data "archive_file" "api" {
   type        = "zip"
-  source_file = "${path.module}/../src/gateway.py"
-  output_path = "${path.module}/.build/gateway.zip"
+  source_file = "${path.module}/../src/api.py"
+  output_path = "${path.module}/.build/api.zip"
 }
 
-resource "aws_lambda_function" "gateway" {
-  function_name    = "gnos-gateway"
+resource "aws_lambda_function" "api" {
+  function_name    = local.functions.api
   role             = aws_iam_role.lambda_role.arn
-  handler          = "gateway.lambda_handler"
+  handler          = "api.lambda_handler"
   runtime          = "python3.12"
   timeout          = 30
-  filename         = data.archive_file.gateway.output_path
-  source_code_hash = data.archive_file.gateway.output_base64sha256
+  filename         = data.archive_file.api.output_path
+  source_code_hash = data.archive_file.api.output_base64sha256
 
   environment {
     variables = {
       DISCORD_WEBHOOK = var.discord_webhook_url
-      API_KEYS        = local.api_keys
+      API_KEYS        = jsonencode(var.api_keys)
     }
   }
 }
 
-# ============================================================
-# API Gateway HTTP API: gnos-gateway
-# ============================================================
+resource "aws_lambda_function_url" "api" {
+  function_name      = aws_lambda_function.api.function_name
+  authorization_type = "NONE"
 
-resource "aws_apigatewayv2_api" "gateway" {
-  name          = "gnos-gateway"
-  protocol_type = "HTTP"
-
-  cors_configuration {
+  cors {
     allow_origins = ["*"]
     allow_methods = ["GET", "POST", "DELETE"]
-    allow_headers = ["Content-Type", "x-api-key"]
+    # 許可しないとプリフライトが落ちて POST/DELETE が通らない
+    allow_headers = ["content-type", "x-api-key"]
   }
 }
 
-resource "aws_apigatewayv2_integration" "gateway" {
-  api_id                 = aws_apigatewayv2_api.gateway.id
-  integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.gateway.invoke_arn
-  payload_format_version = "2.0"
+# 公開には許可が2つ要る。2024年以降のアカウントは Function URL の公開が
+# 既定でブロックされており、InvokeFunctionUrl だけだと 403 になる。
+resource "aws_lambda_permission" "api_url" {
+  statement_id           = "AllowPublicFunctionUrl"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = aws_lambda_function.api.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
 }
 
-resource "aws_apigatewayv2_route" "add" {
-  api_id    = aws_apigatewayv2_api.gateway.id
-  route_key = "POST /add"
-  target    = "integrations/${aws_apigatewayv2_integration.gateway.id}"
-}
-
-resource "aws_apigatewayv2_route" "games" {
-  api_id    = aws_apigatewayv2_api.gateway.id
-  route_key = "GET /games"
-  target    = "integrations/${aws_apigatewayv2_integration.gateway.id}"
-}
-
-resource "aws_apigatewayv2_route" "history" {
-  api_id    = aws_apigatewayv2_api.gateway.id
-  route_key = "GET /history"
-  target    = "integrations/${aws_apigatewayv2_integration.gateway.id}"
-}
-
-resource "aws_apigatewayv2_route" "search" {
-  api_id    = aws_apigatewayv2_api.gateway.id
-  route_key = "GET /search"
-  target    = "integrations/${aws_apigatewayv2_integration.gateway.id}"
-}
-
-resource "aws_apigatewayv2_route" "delete_game" {
-  api_id    = aws_apigatewayv2_api.gateway.id
-  route_key = "DELETE /games"
-  target    = "integrations/${aws_apigatewayv2_integration.gateway.id}"
-}
-
-resource "aws_apigatewayv2_stage" "gateway" {
-  api_id      = aws_apigatewayv2_api.gateway.id
-  name        = "$default"
-  auto_deploy = true
-}
-
-resource "aws_lambda_permission" "api_gateway" {
-  statement_id  = "AllowAPIGateway"
+# 公開ブロックを解除するのはこちら。
+# function_url_auth_type は InvokeFunctionUrl 専用なので指定できない
+resource "aws_lambda_permission" "api_invoke" {
+  statement_id  = "AllowPublicInvoke"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.gateway.function_name
-  principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.gateway.execution_arn}/*/*"
+  function_name = aws_lambda_function.api.function_name
+  principal     = "*"
 }
 
-# ============================================================
-# EventBridge: gnos-schedule
-# ============================================================
+# 宣言しないと Lambda が暗黙に作り、destroy してもログだけ残る。
+# Lambda リソースを参照しないのは、for_each のキーが apply 時まで
+# 未確定になり import できなくなるため。
+resource "aws_cloudwatch_log_group" "lambda" {
+  for_each = toset(values(local.functions))
+
+  name              = "/aws/lambda/${each.value}"
+  retention_in_days = 30
+}
 
 resource "aws_cloudwatch_event_rule" "schedule" {
-  name                = "gnos-schedule"
+  name                = "${var.project_name}-schedule"
   schedule_expression = "rate(3 hours)"
 }
 
@@ -258,12 +193,8 @@ resource "aws_lambda_permission" "eventbridge" {
   source_arn    = aws_cloudwatch_event_rule.schedule.arn
 }
 
-# ============================================================
-# S3: gnos-site
-# ============================================================
-
 resource "aws_s3_bucket" "site" {
-  bucket = "gnos-site"
+  bucket = "${var.project_name}-site"
 }
 
 resource "aws_s3_bucket_website_configuration" "site" {
@@ -299,24 +230,95 @@ resource "aws_s3_bucket_policy" "site" {
   depends_on = [aws_s3_bucket_public_access_block.site]
 }
 
+# templatefile ではなく replace なのは、HTML内の ${...} を展開しないため
 locals {
-  gateway_url  = trimsuffix(aws_apigatewayv2_stage.gateway.invoke_url, "/")
-  index_html   = templatefile("${path.module}/../site/index.html", { api_url = local.gateway_url })
-  history_html = templatefile("${path.module}/../site/history.html", { api_url = local.gateway_url })
+  site_files = {
+    "index.html"   = "${path.module}/../site/index.html"
+    "history.html" = "${path.module}/../site/history.html"
+  }
 }
 
-resource "aws_s3_object" "index" {
-  bucket       = aws_s3_bucket.site.id
-  key          = "index.html"
-  content      = local.index_html
+resource "aws_s3_object" "site" {
+  for_each = local.site_files
+
+  bucket = aws_s3_bucket.site.id
+  key    = each.key
+  # Function URL は末尾に / が付く。JS が API_URL + "/games" と
+  # 連結するので、剥がさないと //games になり一致しない
+  content      = replace(file(each.value), "__API_URL__", trimsuffix(aws_lambda_function_url.api.function_url, "/"))
   content_type = "text/html"
-  etag         = md5(local.index_html)
 }
 
-resource "aws_s3_object" "history" {
-  bucket       = aws_s3_bucket.site.id
-  key          = "history.html"
-  content      = local.history_html
-  content_type = "text/html"
-  etag         = md5(local.history_html)
+# 明示的 Deny は AdministratorAccess にも勝つ。
+# Condition で例外を表現しているので誰に貼っても安全 →
+# 全ユーザに貼り、「誰を禁止するか」の管理を不要にしている。
+
+data "aws_iam_users" "all" {}
+
+resource "aws_iam_policy" "guardrail" {
+  name        = "${var.project_name}-guardrail"
+  description = "Terraform実行者以外による ${var.project_name}-* の削除を拒否する"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Deny"
+      Action   = local.guardrail_actions
+      Resource = local.guardrail_arns
+      Condition = {
+        ArnNotLike = {
+          "aws:PrincipalArn" = [local.deploy_principal_arn]
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_user_policy_attachment" "guardrail" {
+  for_each   = toset(data.aws_iam_users.all.names)
+  user       = each.value
+  policy_arn = aws_iam_policy.guardrail.arn
+}
+
+data "aws_caller_identity" "current" {}
+
+locals {
+  account_id = data.aws_caller_identity.current.account_id
+
+  functions = {
+    observer = "${var.project_name}-observer"
+    api      = "${var.project_name}-api"
+  }
+
+  deploy_principal_arn = data.aws_caller_identity.current.arn
+
+  guardrail_actions = [
+    "dynamodb:DeleteTable",
+    "dynamodb:DeleteBackup",
+    "lambda:DeleteFunction",
+    "lambda:DeleteFunctionUrlConfig",
+    "lambda:RemovePermission",
+    "events:DeleteRule",
+    "events:RemoveTargets",
+    "s3:DeleteBucket",
+    "s3:DeleteBucketPolicy",
+    "s3:DeleteBucketWebsite",
+    "s3:DeleteObject",
+    "s3:DeleteObjectVersion",
+    "iam:DeleteRole",
+    "iam:DeleteRolePolicy",
+    "iam:DeletePolicy",
+    "logs:DeleteLogGroup",
+  ]
+
+  guardrail_arns = [
+    "arn:aws:dynamodb:*:${local.account_id}:table/${var.project_name}-*",
+    "arn:aws:lambda:*:${local.account_id}:function:${var.project_name}-*",
+    "arn:aws:events:*:${local.account_id}:rule/${var.project_name}-*",
+    "arn:aws:s3:::${var.project_name}-*",
+    "arn:aws:s3:::${var.project_name}-*/*",
+    "arn:aws:iam::${local.account_id}:role/${var.project_name}-*",
+    "arn:aws:iam::${local.account_id}:policy/${var.project_name}-*",
+    "arn:aws:logs:*:${local.account_id}:log-group:/aws/lambda/${var.project_name}-*",
+  ]
 }
