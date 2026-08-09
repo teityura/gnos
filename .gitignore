@@ -3,4 +3,5 @@ terraform/.terraform/
 terraform/.build/
 *.tfstate
 *.backup
-backup/
+backup/*
+!backup/.gitkeep
