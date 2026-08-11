@@ -40,6 +40,13 @@ def lambda_handler(event, context):
                 "discount": current_discount,
             })
 
+            # 一覧表示用の非正規化。無いと gnos-api が全ゲーム分 query する羽目になる
+            games_table.update_item(
+                Key={"app_id": app_id},
+                UpdateExpression="SET latest_price = :p, latest_discount = :d",
+                ExpressionAttributeValues={":p": current_price, ":d": current_discount},
+            )
+
             if prev is None:
                 print(f"初回記録: {name} ¥{current_price // 100:,}")
                 continue  # 比較対象なし。次回から通知対象

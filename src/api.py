@@ -154,19 +154,12 @@ def handle_search(params):
 
 
 def handle_games():
-    """全ゲーム一覧を返す（最新価格付き）"""
-    items = games_table.scan()["Items"]
-    for item in items:
-        latest = prices_table.query(
-            KeyConditionExpression="app_id = :id",
-            ExpressionAttributeValues={":id": item["app_id"]},
-            ScanIndexForward=False,
-            Limit=1,
-        ).get("Items", [])
-        if latest:
-            item["latest_price"]    = latest[0].get("price", 0)
-            item["latest_discount"] = latest[0].get("discount", 0)
-    return response(200, {"games": convert_decimals(items)})
+    """全ゲーム一覧を返す（最新価格付き）
+
+    latest_price は observer が書き込む。ここで price を引くと
+    ゲーム数だけ query が増える（N+1）。
+    """
+    return response(200, {"games": convert_decimals(games_table.scan()["Items"])})
 
 
 def handle_history(params):
