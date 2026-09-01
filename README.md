@@ -56,24 +56,20 @@ make clean     # destroy + remove local state
 and every resource has to be recovered one by one with `terraform import`.
 Use it only when tearing the project down for good.
 
-## Deletion guardrail
+## Deletion protection
 
-Learning and production resources share one AWS account, so an IAM policy is attached to
-**every** IAM user that denies deleting anything named `gnos-*`, except for the principal
-running Terraform.
+Three layers, none of which enumerate projects:
 
-```
-Deny      16 delete actions
-Resource  arn:aws:*:*:*:gnos-*
-Condition ArnNotLike aws:PrincipalArn = the Terraform caller
-```
+| layer | where | covers |
+|---|---|---|
+| tag deny | aws-ops (`sweeper-guardrail`) | anything with a `Project` tag, any value |
+| bucket policy | this repo | S3, where tag conditions do not work |
+| native flag | `deletion_protection_enabled` | DynamoDB tables, against every principal |
 
-An explicit Deny beats `AdministratorAccess`, so even an admin cannot remove `gnos-*`.
-Selecting everything in the console and hitting delete leaves only gnos behind with
-`AccessDenied`, without getting in the way of scratch resources.
-
-Protected resources are matched by ARN wildcard, so **the naming convention is the security
-boundary** — adding a resource requires no policy change.
+`default_tags` stamps `Project` / `ManagedBy` on every taggable resource, so a new
+resource is protected without touching any policy. The bucket policy also denies
+`PutBucketPolicy` / `DeleteBucketPolicy` for everyone but the Terraform principal,
+so it cannot be stripped first and deleted after.
 
 ## Design notes
 

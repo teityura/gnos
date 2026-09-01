@@ -9,6 +9,13 @@ terraform {
 
 provider "aws" {
   region = var.aws_region
+
+  default_tags {
+    tags = {
+      Project   = var.project_name
+      ManagedBy = "terraform"
+    }
+  }
 }
 
 resource "aws_dynamodb_table" "games" {
@@ -219,12 +226,31 @@ resource "aws_s3_bucket_policy" "site" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = "*"
-      Action    = "s3:GetObject"
-      Resource  = "${aws_s3_bucket.site.arn}/*"
-    }]
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "s3:GetObject"
+        Resource  = "${aws_s3_bucket.site.arn}/*"
+      },
+      {
+        # [NOTE] S3 はタグ条件非対応なので中央のガードレールが効かない
+        # ポリシー自体の変更・削除も拒否し、剥がしてから消す2段削除を防ぐ
+        Sid       = "DenyDelete"
+        Effect    = "Deny"
+        Principal = "*"
+        Action = [
+          "s3:DeleteBucket",
+          "s3:DeleteBucketPolicy",
+          "s3:DeleteObject",
+          "s3:PutBucketPolicy",
+        ]
+        Resource = [aws_s3_bucket.site.arn, "${aws_s3_bucket.site.arn}/*"]
+        Condition = {
+          ArnNotLike = { "aws:PrincipalArn" = local.deploy_principal_arn }
+        }
+      },
+    ]
   })
 
   depends_on = [aws_s3_bucket_public_access_block.site]
@@ -249,37 +275,6 @@ resource "aws_s3_object" "site" {
   content_type = "text/html"
 }
 
-# 明示的 Deny は AdministratorAccess にも勝つ。
-# Condition で例外を表現しているので誰に貼っても安全 →
-# 全ユーザに貼り、「誰を禁止するか」の管理を不要にしている。
-
-data "aws_iam_users" "all" {}
-
-resource "aws_iam_policy" "guardrail" {
-  name        = "${var.project_name}-guardrail"
-  description = "Terraform実行者以外による ${var.project_name}-* の削除を拒否する"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Deny"
-      Action   = local.guardrail_actions
-      Resource = local.guardrail_arns
-      Condition = {
-        ArnNotLike = {
-          "aws:PrincipalArn" = [local.deploy_principal_arn]
-        }
-      }
-    }]
-  })
-}
-
-resource "aws_iam_user_policy_attachment" "guardrail" {
-  for_each   = toset(data.aws_iam_users.all.names)
-  user       = each.value
-  policy_arn = aws_iam_policy.guardrail.arn
-}
-
 data "aws_caller_identity" "current" {}
 
 locals {
@@ -291,34 +286,4 @@ locals {
   }
 
   deploy_principal_arn = data.aws_caller_identity.current.arn
-
-  guardrail_actions = [
-    "dynamodb:DeleteTable",
-    "dynamodb:DeleteBackup",
-    "lambda:DeleteFunction",
-    "lambda:DeleteFunctionUrlConfig",
-    "lambda:RemovePermission",
-    "events:DeleteRule",
-    "events:RemoveTargets",
-    "s3:DeleteBucket",
-    "s3:DeleteBucketPolicy",
-    "s3:DeleteBucketWebsite",
-    "s3:DeleteObject",
-    "s3:DeleteObjectVersion",
-    "iam:DeleteRole",
-    "iam:DeleteRolePolicy",
-    "iam:DeletePolicy",
-    "logs:DeleteLogGroup",
-  ]
-
-  guardrail_arns = [
-    "arn:aws:dynamodb:*:${local.account_id}:table/${var.project_name}-*",
-    "arn:aws:lambda:*:${local.account_id}:function:${var.project_name}-*",
-    "arn:aws:events:*:${local.account_id}:rule/${var.project_name}-*",
-    "arn:aws:s3:::${var.project_name}-*",
-    "arn:aws:s3:::${var.project_name}-*/*",
-    "arn:aws:iam::${local.account_id}:role/${var.project_name}-*",
-    "arn:aws:iam::${local.account_id}:policy/${var.project_name}-*",
-    "arn:aws:logs:*:${local.account_id}:log-group:/aws/lambda/${var.project_name}-*",
-  ]
 }

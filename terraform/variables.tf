@@ -1,5 +1,5 @@
 variable "project_name" {
-  description = "リソース名の接頭辞。全リソースが {project_name}-* になり、ガードレールもこの接頭辞で守る"
+  description = "リソース名の接頭辞 = Project タグの値。全リソースが {project_name}-* になる"
   type        = string
 }
 
