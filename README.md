@@ -44,7 +44,7 @@ Auth is a plain lookup in `api.py` against the `API_KEYS` environment variable
 ## Usage
 
 ```bash
-make setup     # create terraform.tfvars from the sample, then init
+make setup     # create secrets.auto.tfvars from the sample, then init
                # -> fill in discord_webhook_url and api_keys
 make           # deploy (init + apply)
 make plan      # show diff

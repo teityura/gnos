@@ -7,8 +7,8 @@ deploy: init apply
 setup: tfvars init
 
 tfvars:
-	test -f terraform/terraform.tfvars || \
-	  cp terraform/terraform.tfvars.sample terraform/terraform.tfvars
+	test -f terraform/secrets.auto.tfvars || \
+	  cp terraform/secrets.auto.tfvars.sample terraform/secrets.auto.tfvars
 
 init:
 	$(TF) init

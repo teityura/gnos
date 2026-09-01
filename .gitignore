@@ -1,6 +1,7 @@
-terraform/terraform.tfvars
+terraform/.terraform.lock.hcl
 terraform/.terraform/
 terraform/.build/
+*.auto.tfvars
 *.tfstate
 *.backup
 backup/*
