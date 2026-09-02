@@ -222,7 +222,7 @@ resource "aws_s3_bucket_public_access_block" "site" {
 }
 
 module "s3_guardrail" {
-  source               = "../../terraform-modules/s3-guardrail"
+  source               = "github.com/teityura/terraform-modules//s3-guardrail"
   bucket_arn           = aws_s3_bucket.site.arn
   allow_principal_arns = [local.deploy_principal_arn]
 }
