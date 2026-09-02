@@ -221,37 +221,29 @@ resource "aws_s3_bucket_public_access_block" "site" {
   restrict_public_buckets = false
 }
 
+module "s3_guardrail" {
+  source               = "../../terraform-modules/s3-guardrail"
+  bucket_arn           = aws_s3_bucket.site.arn
+  allow_principal_arns = [local.deploy_principal_arn]
+}
+
+data "aws_iam_policy_document" "site" {
+  source_policy_documents = [module.s3_guardrail.json]
+
+  statement {
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.site.arn}/*"]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+  }
+}
+
 resource "aws_s3_bucket_policy" "site" {
   bucket = aws_s3_bucket.site.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect    = "Allow"
-        Principal = "*"
-        Action    = "s3:GetObject"
-        Resource  = "${aws_s3_bucket.site.arn}/*"
-      },
-      {
-        # [NOTE] S3 はタグ条件非対応なので中央のガードレールが効かない
-        # ポリシー自体の変更・削除も拒否し、剥がしてから消す2段削除を防ぐ
-        Sid       = "DenyDelete"
-        Effect    = "Deny"
-        Principal = "*"
-        Action = [
-          "s3:DeleteBucket",
-          "s3:DeleteBucketPolicy",
-          "s3:DeleteObject",
-          "s3:PutBucketPolicy",
-        ]
-        Resource = [aws_s3_bucket.site.arn, "${aws_s3_bucket.site.arn}/*"]
-        Condition = {
-          ArnNotLike = { "aws:PrincipalArn" = local.deploy_principal_arn }
-        }
-      },
-    ]
-  })
+  policy = data.aws_iam_policy_document.site.json
 
   depends_on = [aws_s3_bucket_public_access_block.site]
 }
