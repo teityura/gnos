@@ -162,6 +162,8 @@ async function loadHistory() {
         responsive: true,
         scales: {
           y: {
+            // 0 円を底にしないと、軸の下端が最安値に寄って小さな値下げも暴落に見える
+            beginAtZero: true,
             ticks: { color: "#555", callback: v => "¥" + v.toLocaleString() },
             grid: { color: "#161616" },
             border: { color: "#1c1c1c" },
