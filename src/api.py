@@ -39,6 +39,8 @@ def lambda_handler(event, context):
             return handle_history(params)
         elif method == "GET" and path == "/search":
             return handle_search(params)
+        elif method == "POST" and path == "/archive":
+            return handle_archive(event)
         elif method == "DELETE" and path == "/games":
             return handle_delete(event, params)
         else:
@@ -62,6 +64,8 @@ def handle_add(event, webhook):
         return response(400, {"error": "app_id is required"})
 
     existing = games_table.get_item(Key={"app_id": app_id}).get("Item")
+    if existing and existing.get("archived_at"):
+        return restore_game(existing, username, webhook)
     if existing:
         return response(409, {
             "error": "already exists",
@@ -114,8 +118,53 @@ def handle_add(event, webhook):
     return response(200, {"status": "ok", "name": name, "app_id": app_id})
 
 
+def restore_game(game, username, webhook):
+    """アーカイブ済みのゲームをウォッチリストに戻す。履歴はそのまま続きから使う"""
+    app_id = game["app_id"]
+    name = game.get("name", app_id)
+    update = "REMOVE archived_at SET added_by = :u"
+    values = {":u": username}
+    # [NOTE] アーカイブ中も crawler は価格を追っているので、通知済みの値を今の値に揃える。揃えないと戻した翌日にアーカイブ中の変化がまとめて届く
+    if "latest_price" in game:
+        update += ", notified_price = :p, notified_discount = :d"
+        values.update({":p": game["latest_price"], ":d": game.get("latest_discount", 0)})
+    games_table.update_item(Key={"app_id": app_id}, UpdateExpression=update, ExpressionAttributeValues=values)
+
+    if webhook:
+        try:
+            notify(webhook, f"↩️ **{name}** をウォッチリストに戻しました (by {username})")
+        except Exception as e:
+            print(f"Discord通知失敗（無視）: {e}")
+
+    return response(200, {"status": "ok", "name": name, "app_id": app_id, "restored": True})
+
+
+def handle_archive(event):
+    """ゲームをアーカイブする。価格は追い続け、履歴も残し、通知だけ止める"""
+    if not authenticate(event):
+        return response(403, {"error": "invalid api key"})
+
+    app_id = str(json.loads(event.get("body") or "{}").get("app_id", "")).strip()
+    if not app_id:
+        return response(400, {"error": "app_id is required"})
+
+    existing = games_table.get_item(Key={"app_id": app_id}).get("Item")
+    if not existing:
+        return response(404, {"error": "not found"})
+
+    # [NOTE] 行を消さずに印を付ける（論理削除）。戻せる操作なので、同じ操作を2回しても結果は変わらない
+    if not existing.get("archived_at"):
+        games_table.update_item(
+            Key={"app_id": app_id},
+            UpdateExpression="SET archived_at = :t",
+            ExpressionAttributeValues={":t": datetime.now(timezone.utc).isoformat()},
+        )
+
+    return response(200, {"status": "ok", "archived": app_id})
+
+
 def handle_delete(event, params):
-    """ゲームを削除し、関連する価格履歴もまとめて消す"""
+    """アーカイブ済みのゲームを、価格履歴ごと完全に削除する"""
     if not authenticate(event):
         return response(403, {"error": "invalid api key"})
 
@@ -126,18 +175,30 @@ def handle_delete(event, params):
     existing = games_table.get_item(Key={"app_id": app_id}).get("Item")
     if not existing:
         return response(404, {"error": "not found"})
+    # [NOTE] 完全削除はアーカイブを経たものだけに限る。画面を経由しない呼び出しでも2段階を飛ばせない
+    if not existing.get("archived_at"):
+        return response(409, {"error": "archive first"})
+
+    # [NOTE] 履歴を先に消し、ゲームの行は最後に消す。途中で時間切れになっても、もう一度押せば続きから消せる
+    deleted = 0
+    query = {
+        "KeyConditionExpression": "app_id = :id",
+        "ExpressionAttributeValues": {":id": app_id},
+        "ProjectionExpression": "app_id, checked_at",
+    }
+    with prices_table.batch_writer() as batch:
+        while True:
+            resp = prices_table.query(**query)
+            for item in resp["Items"]:
+                batch.delete_item(Key={"app_id": item["app_id"], "checked_at": item["checked_at"]})
+                deleted += 1
+            if "LastEvaluatedKey" not in resp:
+                break
+            query["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
 
     games_table.delete_item(Key={"app_id": app_id})
-
-    resp = prices_table.query(
-        KeyConditionExpression="app_id = :id",
-        ExpressionAttributeValues={":id": app_id},
-    )
-    with prices_table.batch_writer() as batch:
-        for item in resp["Items"]:
-            batch.delete_item(Key={"app_id": item["app_id"], "checked_at": item["checked_at"]})
-
-    return response(200, {"status": "ok", "deleted": app_id})
+    print(f"完全削除: {existing.get('name', app_id)} 履歴 {deleted} 件")
+    return response(200, {"status": "ok", "deleted": app_id, "prices": deleted})
 
 
 def handle_search(params):

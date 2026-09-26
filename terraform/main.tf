@@ -66,6 +66,7 @@ resource "aws_iam_role" "lambda_role" {
   })
 }
 
+# [NOTE] 削除系の権限は完全削除のため。アーカイブ済みに限る判定は api.py 側で行う
 resource "aws_iam_role_policy" "lambda_policy" {
   name = "${var.project_name}-lambda-policy"
   role = aws_iam_role.lambda_role.id

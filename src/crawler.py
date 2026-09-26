@@ -12,6 +12,7 @@ prices_table = dynamodb.Table("gnos-prices")
 
 def lambda_handler(event, context):
     # [NOTE] crawler は見に行って記録するだけで、通知はしない。通知は notifier が毎日決まった時刻にまとめて送る
+    # [NOTE] アーカイブ済みのゲームも巡回する。履歴を途切れさせず、戻したときにそのまま続きから使える
     games = games_table.scan()["Items"]
 
     for game in games:

@@ -31,8 +31,9 @@ The domain is outside AWS and not managed by Terraform.
 | GET | `/games` | — | Watchlist with latest prices |
 | GET | `/history?app_id=` | — | Price history for a game |
 | GET | `/search?q=` | — | Search Steam games |
-| POST | `/add` | `x-api-key` | Add game to watchlist |
-| DELETE | `/games?app_id=` | `x-api-key` | Remove game and its history |
+| POST | `/add` | `x-api-key` | Add game to watchlist, or restore an archived one |
+| POST | `/archive` | `x-api-key` | Archive game (see below) |
+| DELETE | `/games?app_id=` | `x-api-key` | Delete an archived game and its history |
 
 Auth is a plain lookup in `api.py` against the `API_KEYS` environment variable
 (a JSON map of key → username). Reads are open; writes require a key.
@@ -49,6 +50,14 @@ spelled differently in two places. The username is stored as `added_by`, so do n
 
 Each entry links to the Steam store page and the gnos history page, and mentions the Discord
 user who added the game, if that user has a `discord_id` in `users`.
+
+Removing a game is two steps. Archiving sets `archived_at`: the crawler keeps tracking its price
+and history, and the notifier skips it. Archived games are listed in a collapsed section, from
+which they can be restored (the baseline is reset so changes made while archived are not sent)
+or deleted for good. `DELETE` refuses a game that is not archived, and asks for confirmation
+with the number of history rows. Archiving is undoable, so it asks nothing.
+
+History rows are deleted before the game row, so a delete that times out can simply be retried.
 
 A game gets its baseline when it is added (or on the first digest after this was introduced),
 so nothing is sent for it until its price moves.

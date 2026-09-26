@@ -92,12 +92,22 @@
     opacity: 0.7; transition: opacity 0.15s;
   }
   .game-link:hover { opacity: 1; text-decoration: underline; }
-  .btn-delete {
-    font-size: 12px; color: #5a2a2a; background: none;
+  /* 取り消せる操作は目立たせず、取り消せない削除だけ赤くする */
+  .btn-text {
+    font-size: 12px; background: none;
     border: none; cursor: pointer; padding: 0;
-    opacity: 0.5; transition: opacity 0.15s;
+    opacity: 0.7; transition: opacity 0.15s, color 0.15s;
   }
-  .btn-delete:hover { opacity: 1; color: #ce6f6f; }
+  .btn-text:hover { opacity: 1; background: none; text-decoration: underline; }
+  .btn-archive { color: #666; }
+  .btn-restore { color: #5a8a6a; }
+  .btn-delete { color: #7a3a3a; }
+  .btn-delete:hover { color: #ce6f6f; }
+
+  .archive { margin-top: 28px; }
+  .archive summary { cursor: pointer; }
+  .archive summary:hover { color: #777; }
+  .archive .game-item { opacity: 0.6; }
 
   .loading { color: #444; font-size: 14px; }
   .empty { color: #333; font-size: 14px; padding: 32px 0; text-align: center; }
@@ -129,6 +139,11 @@
 
 <p class="section-label">ウォッチリスト</p>
 <div id="gameList"><span class="loading">読み込み中...</span></div>
+
+<details id="archive" class="archive" hidden>
+  <summary class="section-label" id="archiveLabel">アーカイブ</summary>
+  <div id="archiveList"></div>
+</details>
 
 </div>
 <script>
@@ -186,7 +201,7 @@ async function addGame(appId) {
     const data = await res.json();
 
     if (res.ok) {
-      showMsg("ok", data.name + " を追加しました");
+      showMsg("ok", data.name + (data.restored ? " を戻しました" : " を追加しました"));
       document.getElementById("searchQ").value = "";
       document.getElementById("searchResults").innerHTML = "";
       loadGames();
@@ -198,72 +213,115 @@ async function addGame(appId) {
   }
 }
 
+// 名前を onclick の文字列に埋め込むと ' を含む名前で壊れるので、ボタンには app_id だけ渡して引き直す
+let games = [];
+const nameOf = appId => (games.find(g => g.app_id === appId) || {}).name || appId;
+
 async function loadGames() {
   const el = document.getElementById("gameList");
   try {
     const res = await fetch(API_URL + "/games");
     const data = await res.json();
+    games = (data.games || []).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ja"));
 
-    if (!data.games || data.games.length === 0) {
-      el.innerHTML = '<div class="empty">ゲームが登録されていません</div>';
-      return;
-    }
+    // アーカイブ済みも価格は更新され続けるので、同じ行の形で下に折りたたんで出す
+    const active = games.filter(g => !g.archived_at);
+    const archived = games.filter(g => g.archived_at);
 
-    data.games.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ja"));
-    el.innerHTML = data.games.map(g => {
-      // 割引・セール終了
-      let discHtml, saleEndHtml = "";
-      if (g.latest_discount > 0) {
-        discHtml = '<span class="game-disc">-' + g.latest_discount + '%</span>';
-        if (g.sale_end_at) {
-          const end = new Date(g.sale_end_at);
-          const jst = new Date(end.getTime() + 9 * 60 * 60 * 1000);
-          const m  = jst.getUTCMonth() + 1;
-          const d  = jst.getUTCDate();
-          const hh = String(jst.getUTCHours()).padStart(2, "0");
-          const mm = String(jst.getUTCMinutes()).padStart(2, "0");
-          saleEndHtml = '<span class="game-sale-end">' + m + '/' + d + ' ' + hh + ':' + mm + ' JST</span>';
-        }
-      } else {
-        discHtml = '<span class="game-disc no-sale">—</span>';
-      }
+    el.innerHTML = active.length
+      ? active.map(g => gameRow(g, false)).join("")
+      : '<div class="empty">ゲームが登録されていません</div>';
 
-      // 価格
-      const priceHtml = g.latest_price != null
-        ? '<span class="game-price">¥' + (g.latest_price / 100).toLocaleString() + '</span>'
-        : '<span class="game-price">—</span>';
-
-      return '<div class="game-item">' +
-        '<div class="game-left">' +
-          '<a class="game-name" href="https://store.steampowered.com/app/' + g.app_id + '/" target="_blank" rel="noopener">' + esc(g.name || g.app_id) + '</a>' +
-          '<span class="game-added-by">' + esc(g.added_by || "anon") + '</span>' +
-        '</div>' +
-        '<div class="game-right">' +
-          '<div class="game-sale">' + discHtml + saleEndHtml + '</div>' +
-          priceHtml +
-          '<a class="game-link" href="history.html?app_id=' + g.app_id + '">履歴 →</a>' +
-          '<button class="btn-delete" onclick="deleteGame(\'' + g.app_id + '\', \'' + esc(g.name || g.app_id) + '\')">✕</button>' +
-        '</div>' +
-      '</div>';
-    }).join("");
+    document.getElementById("archive").hidden = archived.length === 0;
+    document.getElementById("archiveLabel").textContent = "アーカイブ（" + archived.length + "件）";
+    document.getElementById("archiveList").innerHTML = archived.map(g => gameRow(g, true)).join("");
   } catch (e) {
     el.innerHTML = '<div class="empty">読み込みに失敗しました</div>';
   }
 }
 
-async function deleteGame(appId, name) {
+function gameRow(g, archived) {
+  // 割引・セール終了
+  let discHtml, saleEndHtml = "";
+  if (g.latest_discount > 0) {
+    discHtml = '<span class="game-disc">-' + g.latest_discount + '%</span>';
+    if (g.sale_end_at) {
+      const end = new Date(g.sale_end_at);
+      const jst = new Date(end.getTime() + 9 * 60 * 60 * 1000);
+      const m  = jst.getUTCMonth() + 1;
+      const d  = jst.getUTCDate();
+      const hh = String(jst.getUTCHours()).padStart(2, "0");
+      const mm = String(jst.getUTCMinutes()).padStart(2, "0");
+      saleEndHtml = '<span class="game-sale-end">' + m + '/' + d + ' ' + hh + ':' + mm + ' JST</span>';
+    }
+  } else {
+    discHtml = '<span class="game-disc no-sale">—</span>';
+  }
+
+  // 価格
+  const priceHtml = g.latest_price != null
+    ? '<span class="game-price">¥' + (g.latest_price / 100).toLocaleString() + '</span>'
+    : '<span class="game-price">—</span>';
+
+  const actionHtml = archived
+    ? '<button class="btn-text btn-restore" onclick="addGame(\'' + g.app_id + '\')">戻す</button>' +
+      '<button class="btn-text btn-delete" onclick="deleteGame(\'' + g.app_id + '\')">削除</button>'
+    : '<button class="btn-text btn-archive" onclick="archiveGame(\'' + g.app_id + '\')">アーカイブ</button>';
+
+  return '<div class="game-item">' +
+    '<div class="game-left">' +
+      '<a class="game-name" href="https://store.steampowered.com/app/' + g.app_id + '/" target="_blank" rel="noopener">' + esc(g.name || g.app_id) + '</a>' +
+      '<span class="game-added-by">' + esc(g.added_by || "anon") + '</span>' +
+    '</div>' +
+    '<div class="game-right">' +
+      '<div class="game-sale">' + discHtml + saleEndHtml + '</div>' +
+      priceHtml +
+      '<a class="game-link" href="history.html?app_id=' + g.app_id + '">履歴 →</a>' +
+      actionHtml +
+    '</div>' +
+  '</div>';
+}
+
+// アーカイブは戻せるので確認しない
+async function archiveGame(appId) {
   const apiKey = document.getElementById("apiKey").value.trim();
   if (!apiKey) { showMsg("err", "API キーを入力してください"); return; }
-  if (!confirm(name + "\n\n削除しますか？価格履歴もすべて削除されます。")) return;
 
   try {
+    const res = await fetch(API_URL + "/archive", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "x-api-key": apiKey},
+      body: JSON.stringify({app_id: appId}),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showMsg("ok", nameOf(appId) + " をアーカイブしました");
+      loadGames();
+    } else {
+      showMsg("err", data.error || "アーカイブに失敗しました");
+    }
+  } catch (e) {
+    showMsg("err", "通信エラー: " + e.message);
+  }
+}
+
+// 削除は戻せないので、消える履歴の件数を見せてから確認する
+async function deleteGame(appId) {
+  const apiKey = document.getElementById("apiKey").value.trim();
+  if (!apiKey) { showMsg("err", "API キーを入力してください"); return; }
+
+  try {
+    const hist = await (await fetch(API_URL + "/history?app_id=" + appId)).json();
+    const count = (hist.prices || []).length.toLocaleString();
+    if (!confirm(nameOf(appId) + " を完全に削除します。\n価格履歴 " + count + " 件も消え、元に戻せません。")) return;
+
     const res = await fetch(API_URL + "/games?app_id=" + appId, {
       method: "DELETE",
       headers: { "x-api-key": apiKey },
     });
     const data = await res.json();
     if (res.ok) {
-      showMsg("ok", name + " を削除しました");
+      showMsg("ok", nameOf(appId) + " を削除しました");
       loadGames();
     } else {
       showMsg("err", data.error || "削除に失敗しました");

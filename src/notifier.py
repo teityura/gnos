@@ -21,7 +21,8 @@ def lambda_handler(event, context):
 
     entries = []
     for game in games_table.scan()["Items"]:
-        if "latest_price" not in game:
+        # [NOTE] アーカイブ済みのゲームは crawler が価格を追い続けるが、通知はしない
+        if "latest_price" not in game or game.get("archived_at"):
             continue
         # [NOTE] 通知済みの値がまだ無いゲームは、今の値を基準として覚えるだけにする。導入直後に全ゲーム分が一斉に届くのを防ぐ
         if "notified_price" not in game:
