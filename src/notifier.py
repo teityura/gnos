@@ -10,7 +10,6 @@ prices_table = dynamodb.Table("gnos-prices")
 
 # [NOTE] Discord は1通2000文字までなので、変化が多い日は何通かに分けて送る
 LIMIT = 2000
-HEADER = "📢 **gnos 価格変動のお知らせ**"
 
 
 def lambda_handler(event, context):
@@ -52,36 +51,43 @@ def build_entry(game, site_url, user_ids, now):
     cur, cur_disc = game["latest_price"], game.get("latest_discount", 0)
     prev, prev_disc = game["notified_price"], game.get("notified_discount", 0)
 
-    lines = []
     # [NOTE] 通知済みの値と最新値を比べる。crawler が最新値と新しい価格を比べるのと同じ型で、比べる相手が違うだけ
     changed = cur != prev
-    if changed:
-        lines.append(change_line(name, prev, prev_disc, cur, cur_disc, is_lowest(app_id, cur)))
     warned = sale_ends_soon(game, now)
-    if warned:
-        lines.append(f"⏰ **{name}** セール終了まで24時間以内 ¥{cur // 100:,} ({cur_disc}%OFF)")
-    if not lines:
+    if not changed and not warned:
         return None
+
+    # [NOTE] 1行目に何が起きたか、2行目にいくらになったかを書き、リンクと登録者はその下に見出し付きで並べる
+    if changed:
+        lines = describe_change(name, prev, prev_disc, cur, cur_disc, is_lowest(app_id, cur))
+        if warned:
+            lines.append("⏰ セールが間もなく終了！")
+    else:
+        lines = [f"⏰ **{name}** のセールが間もなく終了！", f"¥{cur // 100:,} ({cur_disc}%OFF)"]
 
     user_id = user_ids.get(game.get("added_by"))
     if user_id:
-        lines[0] += f" <@{user_id}>"
-    # [NOTE] <> で囲むと Discord がリンクのプレビューを展開しない。まとめ通知でプレビューが並ぶと読めなくなる
-    lines.append(f"<https://store.steampowered.com/app/{app_id}/>")
-    lines.append(f"履歴 <{site_url}/history.html?app_id={app_id}>")
+        lines.append(f"登録: <@{user_id}>")
+    # [NOTE] <> で囲むと Discord がリンクのプレビューを展開しない。プレビューは Steam のストアページだけ出す
+    # [NOTE] プレビューはメッセージの下に付くので、Steam の行を最後に置き、プレビューのすぐ上に来るようにする
+    lines.append(f"価格履歴: <{site_url}/history.html?app_id={app_id}>")
+    lines.append(f"Steam: https://store.steampowered.com/app/{app_id}/")
     return {"text": "\n".join(lines), "user_id": user_id, "game": game, "changed": changed, "warned": warned}
 
 
-def change_line(name, prev, prev_disc, cur, cur_disc, lowest):
-    """前回通知時と今の値から、セール開始・セール終了・価格変動のどれかの1行を作る"""
-    price = f"¥{prev // 100:,} → ¥{cur // 100:,}"
+def describe_change(name, prev, prev_disc, cur, cur_disc, lowest):
+    """前回通知時と今の値から、「何が起きたか」と「いくらになったか」の2行を作る"""
     tag = " 🏆 過去最安値" if lowest else ""
-    if cur_disc > 0 and prev_disc == 0:
-        return f"🎮 **{name}** セール開始 {price} ({cur_disc}%OFF){tag}"
-    if cur_disc == 0 and prev_disc > 0:
-        return f"📊 **{name}** セール終了 {price}"
     off = f" ({cur_disc}%OFF)" if cur_disc > 0 else ""
-    return f"💰 **{name}** 価格変動 {price}{off}{tag}"
+    price = f"¥{prev // 100:,} → ¥{cur // 100:,}{off}{tag}"
+    if cur_disc > 0 and prev_disc == 0:
+        return [f"🎮 **{name}** セール中！", price]
+    if cur_disc == 0 and prev_disc > 0:
+        # [NOTE] セールが終わって値が戻っただけなので、最安値の印は付けない
+        return [f"📊 **{name}** 通常価格に戻りました", f"¥{prev // 100:,} → ¥{cur // 100:,}"]
+    if cur < prev:
+        return [f"📉 **{name}** 値下がりしました", price]
+    return [f"📈 **{name}** 値上がりしました", price]
 
 
 def sale_ends_soon(game, now):
@@ -105,13 +111,13 @@ def is_lowest(app_id, price):
 
 
 def split(entries):
-    """見出しを含めて2000文字に収まるよう、通知文をいくつかの束に分ける"""
-    chunks, current, size = [], [], len(HEADER)
+    """2000文字に収まるよう、通知文をいくつかの束に分ける"""
+    chunks, current, size = [], [], 0
     for entry in entries:
         add = len(entry["text"]) + 2
         if current and size + add > LIMIT:
             chunks.append(current)
-            current, size = [], len(HEADER)
+            current, size = [], 0
         current.append(entry)
         size += add
     if current:
@@ -121,7 +127,7 @@ def split(entries):
 
 def send(webhook, chunk):
     """1束を Discord に送る。メンションは束の中の登録者だけに絞る"""
-    content = "\n\n".join([HEADER] + [entry["text"] for entry in chunk])
+    content = "\n\n".join(entry["text"] for entry in chunk)
     users = sorted({entry["user_id"] for entry in chunk if entry["user_id"]})
     # [NOTE] allowed_mentions で許す相手を明示する。本文に @everyone 等が紛れても鳴らさない
     payload = json.dumps({"content": content, "allowed_mentions": {"parse": [], "users": users}}).encode()
