@@ -74,15 +74,23 @@ def handle_add(event, webhook):
 
     name = steam["name"]
     now = datetime.now(timezone.utc).isoformat()
+    price = steam.get("price_overview")
 
-    games_table.put_item(Item={
+    game = {
         "app_id": app_id,
         "name": name,
         "added_by": added_by,
         "added_at": now,
-    })
+    }
+    # [NOTE] 最新値を登録時点で入れておく。無いと crawler の初回巡回が「初回」と判断し、同じ価格の履歴をもう1件足す
+    # [NOTE] 登録の通知で現在価格を伝えているので、その値を通知済みとして入れる。notifier は次からこの値と比べる
+    if price:
+        game.update(
+            latest_price=price["final"], latest_discount=price["discount_percent"], checked_at=now,
+            notified_price=price["final"], notified_discount=price["discount_percent"],
+        )
+    games_table.put_item(Item=game)
 
-    price = steam.get("price_overview")
     if price:
         prices_table.put_item(Item={
             "app_id": app_id,
@@ -156,7 +164,7 @@ def handle_search(params):
 def handle_games():
     """全ゲーム一覧を返す（最新価格付き）
 
-    latest_price は observer が書き込む。ここで price を引くと
+    latest_price は crawler が書き込む。ここで price を引くと
     ゲーム数だけ query が増える（N+1）。
     """
     return response(200, {"games": convert_decimals(games_table.scan()["Items"])})
@@ -189,11 +197,11 @@ def fetch_steam_info(app_id):
     res = urllib.request.urlopen(req, timeout=10)
     data = json.loads(res.read())
 
-    app = data.get(str(app_id))
-    if not app or not app.get("success"):
-        return None
-
-    return app["data"]
+    # [NOTE] Steam は要求と別の ID をキーにして返すことがあるので、キーではなく中身の steam_appid で確かめる
+    for app in (data or {}).values():
+        if app.get("success") and str(app["data"].get("steam_appid")) == str(app_id):
+            return app["data"]
+    return None
 
 
 def notify(webhook, message):

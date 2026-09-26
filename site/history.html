@@ -135,21 +135,26 @@ async function loadHistory() {
     }).join("");
 
     // グラフ
+    // [NOTE] 履歴は価格が変わった時点だけなので、横軸は時刻そのもの（点の数ではなく経過時間に比例）にする
+    const points = changed.map(p => ({ x: Date.parse(p.checked_at), y: p.price / 100 }));
+    // [NOTE] 最後の変化から今日まで同じ価格が続いているので、今の時刻に同じ値の点を足して線を伸ばす
+    points.push({ x: Date.now(), y: points[points.length - 1].y });
+    const lastIndex = points.length - 1;
+    const md = ms => { const d = new Date(ms); return (d.getMonth() + 1) + "/" + d.getDate(); };
+
     new Chart(document.getElementById("chart"), {
       type: "line",
       data: {
-        labels: sorted.map(p => {
-          const d = new Date(p.checked_at);
-          return (d.getMonth()+1) + "/" + d.getDate();
-        }),
         datasets: [{
           label: "価格 (円)",
-          data: sorted.map(p => p.price / 100),
+          data: points,
           borderColor: "#4a8a5a",
           backgroundColor: "rgba(74,138,90,0.08)",
           fill: true,
-          tension: 0.3,
-          pointRadius: 3,
+          // [NOTE] 価格は次に変わるまで同じ値が続くので、点から水平に伸ばし、次の点で縦に変える
+          stepped: "after",
+          // [NOTE] 今日まで伸ばすために足した点は実際の変化ではないので、丸を描かない
+          pointRadius: ctx => ctx.dataIndex === lastIndex ? 0 : 3,
           pointBackgroundColor: "#4a8a5a",
         }]
       },
@@ -162,7 +167,8 @@ async function loadHistory() {
             border: { color: "#1c1c1c" },
           },
           x: {
-            ticks: { color: "#555" },
+            type: "linear",
+            ticks: { color: "#555", maxTicksLimit: 8, callback: md },
             grid: { color: "#161616" },
             border: { color: "#1c1c1c" },
           }
@@ -170,7 +176,10 @@ async function loadHistory() {
         plugins: {
           legend: { display: false },
           tooltip: {
-            callbacks: { label: ctx => "¥" + ctx.parsed.y.toLocaleString() }
+            callbacks: {
+              title: items => new Date(items[0].parsed.x).toLocaleString("ja-JP"),
+              label: ctx => "¥" + ctx.parsed.y.toLocaleString(),
+            }
           }
         }
       }

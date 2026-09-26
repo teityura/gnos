@@ -18,10 +18,14 @@ provider "aws" {
   }
 }
 
+# [NOTE] オンデマンドは無料枠の対象外。プロビジョンドの 25 WCU / 25 RCU はリージョン内の全テーブルの合計なので、2テーブルで 5 ずつ使う
+# [NOTE] crawler の書き込みは毎時の数秒に集中するが、使わなかった容量が最大5分ぶん貯まるバースト容量で吸収できる
 resource "aws_dynamodb_table" "games" {
-  name         = "${var.project_name}-games"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "app_id"
+  name           = "${var.project_name}-games"
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 5
+  write_capacity = 5
+  hash_key       = "app_id"
 
   attribute {
     name = "app_id"
@@ -30,10 +34,12 @@ resource "aws_dynamodb_table" "games" {
 }
 
 resource "aws_dynamodb_table" "prices" {
-  name         = "${var.project_name}-prices"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "app_id"
-  range_key    = "checked_at"
+  name           = "${var.project_name}-prices"
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 5
+  write_capacity = 5
+  hash_key       = "app_id"
+  range_key      = "checked_at"
 
   attribute {
     name = "app_id"
@@ -96,24 +102,43 @@ resource "aws_iam_role_policy" "lambda_policy" {
   })
 }
 
-data "archive_file" "observer" {
+data "archive_file" "crawler" {
   type        = "zip"
-  source_file = "${path.module}/../src/observer.py"
-  output_path = "${path.module}/.build/observer.zip"
+  source_file = "${path.module}/../src/crawler.py"
+  output_path = "${path.module}/.build/crawler.zip"
 }
 
-resource "aws_lambda_function" "observer" {
-  function_name    = local.functions.observer
+# [NOTE] crawler は見に行って記録するだけなので、Discord の設定は渡さない
+resource "aws_lambda_function" "crawler" {
+  function_name    = local.functions.crawler
   role             = aws_iam_role.lambda_role.arn
-  handler          = "observer.lambda_handler"
+  handler          = "crawler.lambda_handler"
   runtime          = "python3.12"
   timeout          = 60
-  filename         = data.archive_file.observer.output_path
-  source_code_hash = data.archive_file.observer.output_base64sha256
+  filename         = data.archive_file.crawler.output_path
+  source_code_hash = data.archive_file.crawler.output_base64sha256
+}
+
+data "archive_file" "notifier" {
+  type        = "zip"
+  source_file = "${path.module}/../src/notifier.py"
+  output_path = "${path.module}/.build/notifier.zip"
+}
+
+resource "aws_lambda_function" "notifier" {
+  function_name    = local.functions.notifier
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "notifier.lambda_handler"
+  runtime          = "python3.12"
+  timeout          = 30
+  filename         = data.archive_file.notifier.output_path
+  source_code_hash = data.archive_file.notifier.output_base64sha256
 
   environment {
     variables = {
-      DISCORD_WEBHOOK = var.discord_webhook_url
+      DISCORD_WEBHOOK  = var.discord_webhook_url
+      DISCORD_USER_IDS = jsonencode(local.discord_user_ids)
+      SITE_URL         = var.site_url
     }
   }
 }
@@ -136,7 +161,7 @@ resource "aws_lambda_function" "api" {
   environment {
     variables = {
       DISCORD_WEBHOOK = var.discord_webhook_url
-      API_KEYS        = jsonencode(var.api_keys)
+      API_KEYS        = jsonencode(local.api_keys)
     }
   }
 }
@@ -182,22 +207,64 @@ resource "aws_cloudwatch_log_group" "lambda" {
   retention_in_days = 30
 }
 
-resource "aws_cloudwatch_event_rule" "schedule" {
-  name                = "${var.project_name}-schedule"
-  schedule_expression = "rate(3 hours)"
+# [NOTE] EventBridge Scheduler は Lambda 側の許可ではなく、このロールを借りて Lambda を呼ぶ
+resource "aws_iam_role" "scheduler_role" {
+  name = "${var.project_name}-scheduler-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "scheduler.amazonaws.com" }
+      # [NOTE] 他のアカウントの Scheduler にこのロールを使わせない
+      Condition = { StringEquals = { "aws:SourceAccount" = local.account_id } }
+    }]
+  })
 }
 
-resource "aws_cloudwatch_event_target" "observer" {
-  rule = aws_cloudwatch_event_rule.schedule.name
-  arn  = aws_lambda_function.observer.arn
+resource "aws_iam_role_policy" "scheduler_policy" {
+  name = "${var.project_name}-scheduler-policy"
+  role = aws_iam_role.scheduler_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "lambda:InvokeFunction"
+      Resource = [aws_lambda_function.crawler.arn, aws_lambda_function.notifier.arn]
+    }]
+  })
 }
 
-resource "aws_lambda_permission" "eventbridge" {
-  statement_id  = "AllowEventBridge"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.observer.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.schedule.arn
+resource "aws_scheduler_schedule" "crawl" {
+  name                = "${var.project_name}-crawl"
+  schedule_expression = "rate(1 hour)"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = aws_lambda_function.crawler.arn
+    role_arn = aws_iam_role.scheduler_role.arn
+  }
+}
+
+# [NOTE] Scheduler はタイムゾーンを指定できるので、11時を UTC に直さずそのまま書ける
+resource "aws_scheduler_schedule" "notify" {
+  name                         = "${var.project_name}-notify"
+  schedule_expression          = "cron(0 11 * * ? *)"
+  schedule_expression_timezone = "Asia/Tokyo"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = aws_lambda_function.notifier.arn
+    role_arn = aws_iam_role.scheduler_role.arn
+  }
 }
 
 resource "aws_s3_bucket" "site" {
@@ -273,9 +340,15 @@ locals {
   account_id = data.aws_caller_identity.current.account_id
 
   functions = {
-    observer = "${var.project_name}-observer"
+    crawler  = "${var.project_name}-crawler"
+    notifier = "${var.project_name}-notifier"
     api      = "${var.project_name}-api"
   }
 
   deploy_principal_arn = data.aws_caller_identity.current.arn
+
+  # [NOTE] Lambda には今までと同じ形で渡すので、Lambda のコードは users の形を知らなくてよい
+  # [NOTE] 同じ api_key を2人に書くと、キーが重複して plan が Duplicate object key で止まる
+  api_keys         = { for name, u in var.users : u.api_key => name }
+  discord_user_ids = { for name, u in var.users : name => u.discord_id if u.discord_id != null }
 }
