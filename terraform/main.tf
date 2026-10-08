@@ -2,7 +2,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.27"
     }
   }
 }
@@ -272,6 +272,14 @@ resource "aws_s3_bucket" "site" {
   bucket = "${var.project_name}-site"
 }
 
+resource "aws_s3_bucket_abac" "site" {
+  bucket = aws_s3_bucket.site.id
+
+  abac_status {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_website_configuration" "site" {
   bucket = aws_s3_bucket.site.id
 
@@ -289,15 +297,7 @@ resource "aws_s3_bucket_public_access_block" "site" {
   restrict_public_buckets = false
 }
 
-module "s3_guardrail" {
-  source               = "github.com/teityura/terraform-modules//s3-guardrail"
-  bucket_arn           = aws_s3_bucket.site.arn
-  allow_principal_arns = [local.deploy_principal_arn]
-}
-
 data "aws_iam_policy_document" "site" {
-  source_policy_documents = [module.s3_guardrail.json]
-
   statement {
     actions   = ["s3:GetObject"]
     resources = ["${aws_s3_bucket.site.arn}/*"]
@@ -345,8 +345,6 @@ locals {
     notifier = "${var.project_name}-notifier"
     api      = "${var.project_name}-api"
   }
-
-  deploy_principal_arn = data.aws_caller_identity.current.arn
 
   # [NOTE] Lambda には今までと同じ形で渡すので、Lambda のコードは users の形を知らなくてよい
   # [NOTE] 同じ api_key を2人に書くと、キーが重複して plan が Duplicate object key で止まる
