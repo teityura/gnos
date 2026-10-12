@@ -24,7 +24,12 @@ variable "discord_webhook_url" {
   sensitive   = true
 }
 
-variable "site_url" {
-  description = "通知に載せる履歴ページの URL の頭。ドメインは terraform の管理外"
+variable "zone_name" {
+  description = "Cloudflare 上のゾーン名。例 teityura.com"
+  type        = string
+}
+
+variable "domain_name" {
+  description = "画面を出すドメイン。通知に載せる履歴ページの URL にも使う。例 gnos.teityura.com"
   type        = string
 }

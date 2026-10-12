@@ -3,12 +3,12 @@ output "api_url" {
   value       = aws_lambda_function_url.api.function_url
 }
 
-output "site_url" {
-  description = "静的サイトの S3 エンドポイント"
-  value       = aws_s3_bucket_website_configuration.site.website_endpoint
-}
-
 output "project_name" {
   description = "リソース名の接頭辞。backup.sh が対象テーブルの絞り込みに使う"
   value       = var.project_name
+}
+
+output "cloudfront_domain" {
+  description = "CloudFront が持つ既定のドメイン。DNS を切り替える前に、ここを開いて動きを確かめる"
+  value       = aws_cloudfront_distribution.site.domain_name
 }

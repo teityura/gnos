@@ -22,6 +22,7 @@ web UI       api        add / archive / delete games, price history charts
 ```bash
 make setup     # create terraform/secrets.auto.tfvars from the sample
                # -> fill in discord_webhook_url and users
+export CLOUDFLARE_API_TOKEN=...   # needed to edit DNS records
 make           # deploy
 make plan      # show diff
 make backup    # dump DynamoDB tables to backup/<timestamp>/
@@ -34,12 +35,13 @@ To add a user, add a line to `users` in `secrets.auto.tfvars` and run `make`.
 
 | Name | What |
 |---|---|
-| `gnos-crawler` / `gnos-notifier` / `gnos-api` | Lambda |
+| `gnos-crawler` / `gnos-notifier` | Lambda |
+| `gnos-api` | Lambda: serves the web UI and the API |
 | `gnos-crawl` / `gnos-notify` | EventBridge Scheduler |
 | `gnos-games` / `gnos-prices` | DynamoDB: watchlist / price changes |
-| `gnos-site` | S3: web UI |
+| `gnos` | CloudFront: serves `gnos-api` over HTTPS |
 
-Plus IAM roles and log groups. The domain is served by nginx on a Sakura VPS, outside Terraform.
+Plus IAM roles, log groups, an ACM certificate and DNS records on Cloudflare.
 
 Design notes, cost and diagrams are on the wiki.
 

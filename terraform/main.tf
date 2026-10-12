@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.27"
     }
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 5.0"
+    }
   }
 }
 
@@ -17,6 +21,23 @@ provider "aws" {
     }
   }
 }
+
+# [NOTE] CloudFront で使う証明書は、us-east-1 でしか発行できない。証明書のためだけに、もう1つの入口を用意する
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  # [NOTE] default_tags は入口ごとに要る。無いと証明書だけタグ無しになり、削除のガードレールから漏れる
+  default_tags {
+    tags = {
+      Project   = var.project_name
+      ManagedBy = "terraform"
+    }
+  }
+}
+
+# [NOTE] トークンは環境変数 CLOUDFLARE_API_TOKEN から読む。ファイルには書かない
+provider "cloudflare" {}
 
 # [NOTE] オンデマンドは無料枠の対象外。プロビジョンドの 25 WCU / 25 RCU はリージョン内の全テーブルの合計なので、2テーブルで 5 ずつ使う
 # [NOTE] crawler の書き込みは毎時の数秒に集中するが、使わなかった容量が最大5分ぶん貯まるバースト容量で吸収できる
@@ -139,15 +160,27 @@ resource "aws_lambda_function" "notifier" {
     variables = {
       DISCORD_WEBHOOK  = var.discord_webhook_url
       DISCORD_USER_IDS = jsonencode(local.discord_user_ids)
-      SITE_URL         = var.site_url
+      SITE_URL         = "https://${var.domain_name}"
     }
   }
 }
 
+# [NOTE] 画面も同じ Lambda が返す。HTML は2枚なので、S3 を置かずに zip に同梱する
 data "archive_file" "api" {
   type        = "zip"
-  source_file = "${path.module}/../src/api.py"
   output_path = "${path.module}/.build/api.zip"
+
+  source {
+    filename = "api.py"
+    content  = file("${path.module}/../src/api.py")
+  }
+  dynamic "source" {
+    for_each = fileset("${path.module}/../site", "*.html")
+    content {
+      filename = source.value
+      content  = file("${path.module}/../site/${source.value}")
+    }
+  }
 }
 
 resource "aws_lambda_function" "api" {
@@ -170,13 +203,6 @@ resource "aws_lambda_function" "api" {
 resource "aws_lambda_function_url" "api" {
   function_name      = aws_lambda_function.api.function_name
   authorization_type = "NONE"
-
-  cors {
-    allow_origins = ["*"]
-    allow_methods = ["GET", "POST", "DELETE"]
-    # 許可しないとプリフライトが落ちて POST/DELETE が通らない
-    allow_headers = ["content-type", "x-api-key"]
-  }
 }
 
 # 公開には許可が2つ要る。2024年以降のアカウントは Function URL の公開が
@@ -266,73 +292,6 @@ resource "aws_scheduler_schedule" "notify" {
     arn      = aws_lambda_function.notifier.arn
     role_arn = aws_iam_role.scheduler_role.arn
   }
-}
-
-resource "aws_s3_bucket" "site" {
-  bucket = "${var.project_name}-site"
-}
-
-resource "aws_s3_bucket_abac" "site" {
-  bucket = aws_s3_bucket.site.id
-
-  abac_status {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_website_configuration" "site" {
-  bucket = aws_s3_bucket.site.id
-
-  index_document {
-    suffix = "index.html"
-  }
-}
-
-resource "aws_s3_bucket_public_access_block" "site" {
-  bucket = aws_s3_bucket.site.id
-
-  block_public_acls       = false
-  block_public_policy     = false
-  ignore_public_acls      = false
-  restrict_public_buckets = false
-}
-
-data "aws_iam_policy_document" "site" {
-  statement {
-    actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.site.arn}/*"]
-
-    principals {
-      type        = "*"
-      identifiers = ["*"]
-    }
-  }
-}
-
-resource "aws_s3_bucket_policy" "site" {
-  bucket = aws_s3_bucket.site.id
-  policy = data.aws_iam_policy_document.site.json
-
-  depends_on = [aws_s3_bucket_public_access_block.site]
-}
-
-# templatefile ではなく replace なのは、HTML内の ${...} を展開しないため
-locals {
-  site_files = {
-    "index.html"   = "${path.module}/../site/index.html"
-    "history.html" = "${path.module}/../site/history.html"
-  }
-}
-
-resource "aws_s3_object" "site" {
-  for_each = local.site_files
-
-  bucket = aws_s3_bucket.site.id
-  key    = each.key
-  # Function URL は末尾に / が付く。JS が API_URL + "/games" と
-  # 連結するので、剥がさないと //games になり一致しない
-  content      = replace(file(each.value), "__API_URL__", trimsuffix(aws_lambda_function_url.api.function_url, "/"))
-  content_type = "text/html"
 }
 
 data "aws_caller_identity" "current" {}

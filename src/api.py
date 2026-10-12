@@ -23,12 +23,24 @@ def authenticate(event):
     key = (event.get("headers") or {}).get("x-api-key", "")
     return get_api_keys().get(key)
 
+# [NOTE] 画面の HTML は zip に同梱してある。起動時に一度だけ読む
+PAGES = {name: open(os.path.join(os.path.dirname(__file__), name), encoding="utf-8").read()
+         for name in ("index.html", "history.html")}
+
 
 def lambda_handler(event, context):
     webhook = DISCORD_WEBHOOK or os.environ.get("DISCORD_WEBHOOK", "")
     method = event.get("requestContext", {}).get("http", {}).get("method", "GET")
     path = event.get("rawPath", "/")
     params = event.get("queryStringParameters") or {}
+
+    page = PAGES.get(path.lstrip("/") or "index.html")
+    if method == "GET" and page:
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache"},
+            "body": page,
+        }
 
     try:
         if method == "POST" and path == "/add":
